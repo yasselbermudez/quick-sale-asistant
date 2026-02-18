@@ -1,8 +1,7 @@
 import { createContext, useEffect, useReducer, type ReactNode } from "react";
 import { useAuth } from "../hooks/useAuth";
 
-const LOCAL_STORAGE_KEY = 'reports_data';
-//const BACKUP_LOCAL_STORAGE_KEY = 'sales_backup';
+const LOCAL_STORAGE_SALES_KEY = 'sales_data';
 
 // ============ INTERFACES PRINCIPALES ============
 interface Product { 
@@ -19,20 +18,6 @@ interface Sale {
   quantity: number; 
   subtotal: number;
   timestamp: string;
-}
-
-interface SummaryItem {
-  productId: number;
-  productName: string;
-  quantity: number;
-  price: number;
-  total: number;
-}
-
-interface Report {
-  dailySales: SummaryItem[];
-  grandTotal:number
-  date:string
 }
 
 // ============ CONTEXT TYPE ============
@@ -52,7 +37,6 @@ export interface SalesContextType {
   fetchDailySales: () => Promise<void>;
   finalizeSale: () => Promise<boolean>;
   clearDailySales: () => void;
-  saveReport: (report:Report)=> void;
 }
 
 // ============ STATE ============
@@ -82,7 +66,7 @@ type SalesAction =
   | { type: 'FETCH_DAILY_SALES_FAILURE'; payload: string }
   | { type: 'FINALIZE_SALE_SUCCESS'; payload: Sale[] }
   | { type: 'CLEAR_DAILY_SALES' }
-  | { type: 'SAVE_REPORT'; payload: Report };
+  | { type: 'LOAD_DAILY_SALES_FROM_STORAGE'; payload: Sale[] };
 
 // ============ PROPS ============
 interface SalesProviderProps {
@@ -92,36 +76,45 @@ interface SalesProviderProps {
 // ============ CONTEXT ============
 const SalesContext = createContext<SalesContextType | undefined>(undefined);
 
+// ============ FUNCIONES DE LOCALSTORAGE ============
+const loadDailySalesFromStorage = (): Sale[] => {
+  try {
+    const savedSales = localStorage.getItem(LOCAL_STORAGE_SALES_KEY);
+    return savedSales ? JSON.parse(savedSales) : [];
+  } catch (error) {
+    console.error('Error loading daily sales from localStorage:', error);
+    return [];
+  }
+};
+
+const saveDailySalesToStorage = (dailySales: Sale[]): void => {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_SALES_KEY, JSON.stringify(dailySales));
+  } catch (error) {
+    console.error('Error saving daily sales to localStorage:', error);
+  }
+};
+
+const clearDailySalesFromStorage = (): void => {
+  try {
+    localStorage.removeItem(LOCAL_STORAGE_SALES_KEY);
+  } catch (error) {
+    console.error('Error clearing daily sales from localStorage:', error);
+  }
+};
+
 // ============ INITIAL STATE ============
 const initialSalesState: SalesState = {
   pendingSales: [],
-  dailySales: [],
+  dailySales: loadDailySalesFromStorage(), // Cargar ventas guardadas al inicializar
   isLoading: false,
   error: null
 };
 
-const saveReportToLocalStorage = (report: Report): void => {
-  try {
-    const savedReportsString = localStorage.getItem(LOCAL_STORAGE_KEY);
-    const savedReports: Report[] = savedReportsString ? JSON.parse(savedReportsString) : [];
-    
-    // Filtrar reportes existentes con la misma fecha para evitar duplicados
-    const reportsWithoutToday = savedReports.filter(r => r.date !== report.date);
-    
-    // Agregar el nuevo reporte
-    const newReports = [...reportsWithoutToday, report];
-    
-    // Ordenar por fecha (más reciente primero)
-    newReports.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newReports, null, 2));
-  } catch (error) {
-    console.error('Error saving reports to localStorage:', error);
-  }
-};
-
 // ============ REDUCER ============
 function salesReducer(state: SalesState, action: SalesAction): SalesState {
+  let newState: SalesState;
+  
   switch (action.type) {
     case 'ADD_PENDING_SALE': {
       // Check if product already exists in pending sales
@@ -140,7 +133,7 @@ function salesReducer(state: SalesState, action: SalesAction): SalesState {
           subtotal: existingSale.subtotal + action.payload.subtotal
         };
         
-        return { ...state, pendingSales: updatedPendingSales };
+        newState = { ...state, pendingSales: updatedPendingSales };
       } else {
         // Add new item
         const newSale: Sale = {
@@ -151,21 +144,23 @@ function salesReducer(state: SalesState, action: SalesAction): SalesState {
           timestamp: new Date().toISOString()
         };
         
-        return { 
+        newState = { 
           ...state, 
           pendingSales: [...state.pendingSales, newSale] 
         };
       }
+      break;
     }
     
     case 'REMOVE_PENDING_SALE':
-      return {
+      newState = {
         ...state,
         pendingSales: state.pendingSales.filter((_, index) => index !== action.payload)
       };
+      break;
 
     case 'INCREASE_PENDING_SALES':
-      return {
+      newState = {
         ...state,
         pendingSales: state.pendingSales.map((sale, index) => {
           if (index === action.payload) {
@@ -179,10 +174,11 @@ function salesReducer(state: SalesState, action: SalesAction): SalesState {
           }
           return sale;
         })
-      }
+      };
+      break;
 
     case 'DECREASE_PENDING_SALES':
-      return {
+      newState = {
         ...state,
         pendingSales: state.pendingSales.map((sale, index) => {
           if (index === action.payload && sale.quantity>1) {
@@ -196,46 +192,68 @@ function salesReducer(state: SalesState, action: SalesAction): SalesState {
           }
           return sale;
         })
-      }
+      };
+      break;
       
     case 'CLEAR_PENDING_SALES':
-      return { ...state, pendingSales: [] };
+      newState = { ...state, pendingSales: [] };
+      break;
       
     case 'FETCH_DAILY_SALES_START':
-      return { ...state, isLoading: true, error: null };
+      newState = { ...state, isLoading: true, error: null };
+      break;
       
     case 'FETCH_DAILY_SALES_SUCCESS':
-      return { 
+      newState = { 
         ...state, 
         isLoading: false, 
         dailySales: action.payload 
       };
+      // Guardar en localStorage cuando se actualizan las ventas
+      saveDailySalesToStorage(action.payload);
+      break;
       
     case 'FETCH_DAILY_SALES_FAILURE':
-      return { 
+      newState = { 
         ...state, 
         isLoading: false, 
         error: action.payload 
       };
+      break;
       
-    case 'FINALIZE_SALE_SUCCESS':
-      return {
+    case 'FINALIZE_SALE_SUCCESS': {
+      const updatedDailySales = [...state.dailySales, ...action.payload];
+      newState = {
         ...state,
         pendingSales: [],
-        dailySales: [...state.dailySales, ...action.payload]
+        dailySales: updatedDailySales
       };
+      // Guardar en localStorage cuando se finaliza una venta
+      saveDailySalesToStorage(updatedDailySales);
+      break;
+    }
 
-    case 'SAVE_REPORT':
-      console.log("pal local storage",action.payload)
-      saveReportToLocalStorage(action.payload)
-      return { ...state, dailySales: [] };
-      
     case 'CLEAR_DAILY_SALES':
-      return { ...state, dailySales: [] };
+      newState = { ...state, dailySales: [] };
+      // Limpiar localStorage
+      clearDailySalesFromStorage();
+      break;
+      
+    case 'LOAD_DAILY_SALES_FROM_STORAGE':
+      newState = { ...state, dailySales: action.payload };
+      break;
       
     default:
       return state;
   }
+  
+  // Si no es una acción de carga desde storage, guardar en localStorage
+  if (action.type !== 'LOAD_DAILY_SALES_FROM_STORAGE') {
+    // Guardar dailySales en localStorage después de cualquier modificación
+    saveDailySalesToStorage(newState.dailySales);
+  }
+  
+  return newState;
 }
 
 // ============ PROVIDER ============
@@ -285,9 +303,13 @@ export function SalesProvider({ children }: SalesProviderProps) {
     dispatch({ type: 'FETCH_DAILY_SALES_START' });
     
     try {
+      // Aquí puedes cargar las ventas desde tu API si es necesario
+      // Por ahora mantenemos las ventas que ya están en localStorage
+      const savedSales = loadDailySalesFromStorage();
+      
       dispatch({ 
         type: 'FETCH_DAILY_SALES_SUCCESS', 
-        payload: []
+        payload: savedSales
       });
     } catch (error) {
       const errorMessage = error instanceof Error 
@@ -335,10 +357,6 @@ export function SalesProvider({ children }: SalesProviderProps) {
     dispatch({ type: 'CLEAR_DAILY_SALES' });
   };
 
-  const saveReport = (report:Report): void => {
-    dispatch({ type: 'SAVE_REPORT' , payload:report});
-  };
-  
   useEffect(() => {
     if (token) {
       fetchDailySales();
@@ -362,7 +380,6 @@ export function SalesProvider({ children }: SalesProviderProps) {
     fetchDailySales,
     finalizeSale,
     clearDailySales,
-    saveReport,
   };
   
   return (
