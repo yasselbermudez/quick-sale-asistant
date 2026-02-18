@@ -39,6 +39,7 @@ interface Product{
               product => product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
               product.sku.toLowerCase().includes(searchTerm.toLowerCase())
           );
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setSearchResults(results);
         } else {
           setSearchResults([]);
@@ -284,49 +285,3 @@ interface Product{
         </div>
       );
     }
-    
-/*
-<label className="block text-sm font-medium text-gray-700 mb-1">
-                  Producto
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Buscar producto por nombre o SKU"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  {isSearching && (
-                    <div className="absolute right-3 top-2">
-                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                    </div>
-                  )}
-                </div>
-                
-                {searchResults.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white shadow-lg rounded-md border border-gray-200 max-h-60 overflow-auto">
-                    {searchResults.map((product) => (
-                      <div
-                        key={product.id}
-                        onClick={() => selectProduct(product)}
-                        className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100"
-                      >
-                        <div className="font-medium">{product.name}</div>
-                        <div className="text-sm text-gray-500">
-                          SKU: {product.sku} | Precio: ${product.price.toFixed(2)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                {selectedProduct && (
-                  <div className="mt-2 p-2 bg-blue-50 rounded-md">
-                    <div className="font-medium">{selectedProduct.name}</div>
-                    <div className="text-sm">
-                      SKU: {selectedProduct.sku} | Precio: ${selectedProduct.price.toFixed(2)}
-                    </div>
-                  </div>
-                )}
-  */

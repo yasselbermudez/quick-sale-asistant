@@ -13,6 +13,13 @@ export interface Product {
   stock: number;
 }
 
+interface BackupData {
+  exportType?: string;       
+  exportedAt?: string;       
+  key: string;               
+  data: Product[];       
+}
+
 export interface ProductContextType {
   products: Product[];
   isLoading: boolean;
@@ -21,8 +28,8 @@ export interface ProductContextType {
   addProduct: (productData: Omit<Product, 'id'>) => Promise<boolean>;
   updateProduct: (id: number, productData: Partial<Product>) => Promise<boolean>;
   deleteProduct: (id: number) => Promise<boolean>;
-  exportProducts: () => string;
-  importProducts: (jsonData: string) => boolean;
+  exportProducts: () => Promise<boolean>;
+  importProducts: () => Promise<boolean>;
   clearProducts: () => void;
   getNextProductId: () => number;
 }
@@ -46,6 +53,8 @@ type ProductAction =
   | { type: 'UPDATE_PRODUCT_SUCCESS'; payload: Product }
   | { type: 'DELETE_PRODUCT_SUCCESS'; payload: number }
   | { type: 'CLEAR_PRODUCTS_SUCCESS' }
+  | { type: 'EXPORT_PRODUCTS' }
+  | { type: 'IMPORT_PRODUCTS'; payload: Product[] }
   | { type: 'CLEAR_ERROR' };
 
 const ProductsContext = createContext<ProductContextType | undefined>(undefined);
@@ -160,6 +169,17 @@ function productsReducer(state: ProductState, action: ProductAction): ProductSta
     case 'CLEAR_ERROR':
       newState = { ...state, error: null };
       break;
+
+    case 'IMPORT_PRODUCTS': {
+      return {
+        ...state,
+        products: action.payload
+      };
+    }
+
+    case 'EXPORT_PRODUCTS':
+      return state
+    
     default:
       return state;
   }
@@ -268,6 +288,128 @@ export function ProductsProvider({ children }: ProductProviderProps) {
       return false;
     }
   };
+
+  const exportProducts = async () : Promise<boolean> => {
+    try {
+      // 1. Leer solo los datos de 'products_data'
+      const productsData = localStorage.getItem(LOCAL_STORAGE_KEY);
+          
+      if (!productsData) {
+        console.log('No hay datos de productos para exportar.');
+        return false;
+      }
+          
+      // 2. Crear objeto estructurado con metadatos
+      const exportData = {
+        exportType: 'products_backup',
+        exportedAt: new Date().toISOString(),
+        key: 'products_data',
+        data: JSON.parse(productsData) // Parseamos para validar estructura
+      };
+          
+      // 3. Convertir a JSON y crear archivo descargable
+      const dataStr = JSON.stringify(exportData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+          
+      // 4. Crear y disparar descarga
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `backup_products_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+          
+      // 5. Limpieza
+      setTimeout(() => {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }, 100);
+      dispatch({ type: 'EXPORT_PRODUCTS' });
+      return true
+      } catch (error) {
+        console.error('Error al exportar backup:', error);
+        return false
+      }
+    };
+
+    function isValidProduct(obj: unknown): obj is Product {
+      if (!obj || typeof obj !== 'object') return false;
+      const p = obj as Partial<Product>;
+      return (
+        typeof p.id === 'number' &&
+        typeof p.name === 'string' &&
+        typeof p.sku === 'string' &&
+        typeof p.price === 'number' &&
+        typeof p.stock === 'number'
+      );
+    }
+
+    function isValidBackup(data: unknown, expectedKey: string): data is BackupData {
+      if (!data || typeof data !== 'object') return false;
+      const obj = data as Record<string, unknown>;
+        
+      // Validar que tenga la clave correcta y que data sea un array
+      if (obj.key !== expectedKey || !Array.isArray(obj.data)) {
+        return false;
+      }
+        
+      return true;
+    }
+
+    const importProducts = (): Promise<boolean> => {
+      return new Promise((resolve) => {
+        try {
+          const fileInput = document.createElement('input');
+          fileInput.type = 'file';
+          fileInput.accept = '.json';
+
+          fileInput.onchange = (event: Event) => {
+            const target = event.target as HTMLInputElement;
+            const file = target.files?.[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+
+            reader.onload = (e: ProgressEvent<FileReader>) => {
+              try {
+                const fileContent = e.target?.result as string;
+                const parsedData: unknown = JSON.parse(fileContent);
+
+                if (!isValidBackup(parsedData, LOCAL_STORAGE_KEY)) {
+                  throw new Error('Archivo no válido. Debe ser un backup de products_data.');
+                }
+
+                const importData = parsedData as BackupData;
+                importData.data = importData.data.filter(isValidProduct);
+                
+                // ✅ Mover el confirm AQUÍ, antes del dispatch
+                const confirmOverwrite = window.confirm(
+                  `¿Deseas reemplazar los productos actuales con ${importData.data.length} productos del archivo?`
+                );
+                
+                if (confirmOverwrite) {
+                  dispatch({ type: 'IMPORT_PRODUCTS', payload: importData.data });
+                  resolve(true);
+                } else {
+                  resolve(false);
+                }
+
+              } catch (error) {
+                console.error('Error al procesar archivo:', error);
+                resolve(false);
+              }
+            };
+
+            reader.readAsText(file);
+          };
+
+          fileInput.click();
+        } catch (error) {
+          console.error('Error en importación:', error);
+          resolve(false);
+        }
+      });
+    };
   
   const deleteProduct = async (id: number) => {
     try {
@@ -282,76 +424,6 @@ export function ProductsProvider({ children }: ProductProviderProps) {
       const errorMessage = error instanceof Error 
         ? error.message 
         : 'Error al eliminar producto';
-      dispatch({ 
-        type: 'FETCH_PRODUCTS_FAILURE', 
-        payload: errorMessage 
-      });
-      return false;
-    }
-  };
-
-  const exportProducts = (): string => {
-    const exportData = {
-      products: state.products,
-      exportDate: new Date().toISOString(),
-      totalProducts: state.products.length,
-      version: '1.0'
-    };
-    
-    return JSON.stringify(exportData, null, 2);
-  };
-
-  const importProducts = (jsonData: string): boolean => {
-    try {
-      const parsedData = JSON.parse(jsonData);
-      let productsToImport: Product[];
-      
-      // Verificar diferentes formatos de importación
-      if (Array.isArray(parsedData)) {
-        // Si es un array directo de productos
-        productsToImport = parsedData;
-      } else if (parsedData.products && Array.isArray(parsedData.products)) {
-        // Si es un objeto con propiedad products
-        productsToImport = parsedData.products;
-      } else {
-        throw new Error('Formato de datos inválido');
-      }
-      
-      // Validar estructura de cada producto
-      const isValid = productsToImport.every(product => 
-        product.id && 
-        product.name && 
-        typeof product.price === 'number' && 
-        typeof product.stock === 'number'
-      );
-      
-      if (!isValid) {
-        throw new Error('Estructura de datos inválida');
-      }
-      
-      // Reasignar IDs si es necesario para evitar conflictos
-      const maxExistingId = state.products.length > 0 
-        ? Math.max(...state.products.map(p => p.id)) 
-        : 0;
-      
-      const importedWithAdjustedIds = productsToImport.map((product, index) => ({
-        ...product,
-        id: maxExistingId + index + 1
-      }));
-      
-      // Combinar productos existentes con importados
-      const combinedProducts = [...state.products, ...importedWithAdjustedIds];
-      
-      dispatch({
-        type: 'FETCH_PRODUCTS_SUCCESS',
-        payload: combinedProducts
-      });
-      
-      return true;
-    } catch (error) {
-      const errorMessage = error instanceof Error 
-        ? error.message 
-        : 'Error al importar productos';
       dispatch({ 
         type: 'FETCH_PRODUCTS_FAILURE', 
         payload: errorMessage 
@@ -377,10 +449,10 @@ export function ProductsProvider({ children }: ProductProviderProps) {
       addProduct,
       updateProduct,
       deleteProduct,
+      clearProducts,
+      getNextProductId,
       exportProducts,
       importProducts,
-      clearProducts,
-      getNextProductId
     }}>
       {children}
     </ProductsContext.Provider>

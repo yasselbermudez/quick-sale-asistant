@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSales } from "../../hooks/useSales";
 import { useToast } from "../../hooks/useToast";
 import { ConfirmDialog } from "../common/ConfirmDialog";
+import { useReports } from '../../hooks/useReports';
 
 interface Product { 
   id: number; 
@@ -28,8 +29,10 @@ interface SummaryItem {
 }
 
   export  function DailySummary() {
-      const { dailySales, clearDailySales,saveReport} = useSales();
+      const { dailySales, clearDailySales } = useSales();
+      const { saveReport} = useReports();
       const [showConfirm, setShowConfirm] = useState(false);
+      const [showConfirmSave, setShowConfirmSave] = useState(false);
       const { addToast } = useToast();
       
       const formatDate = () => {
@@ -68,8 +71,15 @@ interface SummaryItem {
       // Calculate grand total
       const grandTotal = summaryData.reduce((sum, item) => sum + item.total, 0);
       
-      const handleExport = () => {
-        saveReport({dailySales:summaryData,date:formatDate(),grandTotal:grandTotal})
+      const handleSave = () => {
+        saveReport({
+          reportId: formatDate(),
+          dailySales:summaryData,
+          date:formatDate(),
+          grandTotal:grandTotal,
+          type:"daily"
+        })
+        clearDailySales();
         addToast('Reporte guardado', 'success');
       };
       
@@ -141,7 +151,7 @@ interface SummaryItem {
             
             <div className="mt-4 flex justify-end space-x-2">
               <button
-                onClick={handleExport}
+                onClick={() => setShowConfirmSave(true)}
                 disabled={summaryData.length === 0}
                 className="px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-300"
               >
@@ -165,6 +175,13 @@ interface SummaryItem {
               onConfirm={handleClear}
               title="Confirmar Acción"
               message="¿Está seguro que desea limpiar el resumen diario? Esta acción no se puede deshacer."
+            />
+            <ConfirmDialog
+              isOpen={showConfirmSave}
+              onClose={() => setShowConfirmSave(false)}
+              onConfirm={handleSave}
+              title="Confirmar Acción"
+              message="¿Está seguro que desea guardar el reporte? Esta accion limpia el dashboard y mo se puede deshacer."
             />
           </div>
         </div>

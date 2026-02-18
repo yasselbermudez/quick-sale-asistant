@@ -3,15 +3,18 @@ import { ToastProvider } from './contexts/ToastContext';
 import { ProductsProvider } from './contexts/ProductsContext';
 import { SalesProvider } from './contexts/SalesContext';
 import { AppRouter } from './components/AppRouter';
+import { ReportsProvider } from './contexts/ReportsContext';
 
 function App() {
   return (
     <AuthProvider>
       <ToastProvider>
         <ProductsProvider>
-          <SalesProvider>
-            <AppRouter />
-          </SalesProvider>
+          <ReportsProvider>
+            <SalesProvider>
+              <AppRouter />
+            </SalesProvider>
+          </ReportsProvider>
         </ProductsProvider>
       </ToastProvider>
     </AuthProvider>

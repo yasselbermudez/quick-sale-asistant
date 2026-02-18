@@ -1,127 +1,35 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { MoreVertical, X } from "lucide-react";
+import { useReports } from "../hooks/useReports";
 import { useToast } from "../hooks/useToast";
-
-interface SummaryItem {
-  productId: number;
-  productName: string;
-  quantity: number;
-  price: number;
-  total: number;
-}
-
-interface Report {
-  dailySales: SummaryItem[];
-  grandTotal: number;
-  date: string;
-}
-
-// Extendemos para reportes temporales con un identificador único
-interface TempReport extends Report {
-  tempId: string;
-}
-
-const LOCAL_STORAGE_KEY = 'reports_data';
+import type { Report,TempReport}  from "../contexts/ReportsContext";
 
 export function Reports() {
-  const [reports, setReports] = useState<Report[]>([]);
-  const [tempReports, setTempReports] = useState<TempReport[]>([]);
+  const {
+    reports,
+    tempReports,
+    loading,
+    sumFirstReport,
+    deleteReport,
+    addTempReport,
+    setSumFirstReport,
+    combineReports,
+    exportAndDownloadReports,
+    importReportsFromFile,
+  } = useReports();
+
   const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [searchTerms, setSearchTerms] = useState<{ [key: string]: string }>({}); // clave = id único del reporte
-  const [sumFirstReport, setSumFirstReport] = useState<{ id: string; report: Report } | null>(null);
+  const [searchTerms, setSearchTerms] = useState<{ [key: string]: string }>({});
   const { addToast } = useToast();
 
-  // Cargar reportes desde localStorage
-  useEffect(() => {
-    try {
-      const savedReportsString = localStorage.getItem(LOCAL_STORAGE_KEY);
-      const savedReports: Report[] = savedReportsString ? JSON.parse(savedReportsString) : [];
-      setReports(savedReports);
-    } catch (error) {
-      console.error('Error loading reports from localStorage:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Persistir solo los reportes permanentes
-  useEffect(() => {
-    if (!loading) {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(reports));
-    }
-  }, [reports, loading]);
-
   const toggleReportExpansion = (reportId: string) => {
-    if (expandedReportId === reportId) {
-      setExpandedReportId(null);
-    } else {
-      setExpandedReportId(reportId);
-    }
+    setExpandedReportId(prev => prev === reportId ? null : reportId);
   };
 
   const handleSearchChange = (reportId: string, value: string) => {
     setSearchTerms(prev => ({ ...prev, [reportId]: value }));
-  };
-
-  // Eliminar un reporte (permanente o temporal)
-  const deleteReport = (reportToDelete: Report | TempReport) => {
-    if ('tempId' in reportToDelete) {
-      // Es temporal
-      setTempReports(prev => prev.filter(r => r.tempId !== reportToDelete.tempId));
-    } else {
-      // Es permanente
-      if (!window.confirm('¿Estás seguro de que deseas eliminar este reporte?')) return;
-      setReports(prev => prev.filter(r => r !== reportToDelete));
-    }
-    // Si el reporte eliminado estaba expandido, cerrarlo
-    // (la comparación de objetos no es fiable, pero podemos usar el ID único)
-    // Como no tenemos ID en permanentes, usamos el índice en el array? Mejor usar una función que reciba el ID único.
-    // Para simplificar, después de eliminar limpiaremos expandedReportId si el reporte ya no existe.
-    // Lo haremos en un efecto, o simplemente confiamos en que al re-renderizar el ID ya no estará.
-  };
-
-  // Función para combinar dos reportes
-  const combineReports = (reportA: Report, reportB: Report): Report => {
-    // Determinar si son el mismo día (ignorando hora)
-    const datePartA = reportA.date.split(' ')[0];
-    const datePartB = reportB.date.split(' ')[0];
-    const sameDay = datePartA === datePartB;
-
-    let newDate: string;
-    if (sameDay) {
-      // Tomar la fecha más reciente (comparando strings completos)
-      newDate = reportA.date > reportB.date ? reportA.date : reportB.date;
-    } else {
-      newDate = `Suma entre ${reportA.date} y ${reportB.date}`;
-    }
-
-    // Combinar productos por productId
-    const productMap = new Map<number, SummaryItem>();
-    const addItem = (item: SummaryItem) => {
-      const existing = productMap.get(item.productId);
-      if (existing) {
-        existing.quantity += item.quantity;
-        existing.total += item.total;
-        // Mantenemos el nombre y precio del primer encontrado (asumimos consistencia)
-      } else {
-        productMap.set(item.productId, { ...item });
-      }
-    };
-
-    reportA.dailySales.forEach(addItem);
-    reportB.dailySales.forEach(addItem);
-
-    const combinedSales = Array.from(productMap.values());
-    const grandTotal = combinedSales.reduce((sum, item) => sum + item.total, 0);
-
-    return {
-      dailySales: combinedSales,
-      grandTotal,
-      date: newDate,
-    };
   };
 
   // Manejar clic en "Sumar" desde el menú
@@ -129,17 +37,13 @@ export function Reports() {
     if (sumFirstReport) {
       // Ya hay un primer reporte seleccionado
       if (sumFirstReport.id === reportId) {
-        addToast('Selecciona un reporte diferente para sumar.','error');
+        addToast('Selecciona un reporte diferente para sumar.', 'error');
         return;
       }
       // Realizar la suma
       const combined = combineReports(sumFirstReport.report, report);
-      // Crear reporte temporal con ID único
-      const tempReport: TempReport = {
-        ...combined,
-        tempId: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random(),
-      };
-      setTempReports(prev => [...prev, tempReport]);
+      // Crear reporte temporal
+      addTempReport(combined);
       setSumFirstReport(null); // Salir del modo suma
     } else {
       // Primer reporte seleccionado
@@ -147,13 +51,25 @@ export function Reports() {
     }
   };
 
+  const handleImport = async () => {
+    const result = await importReportsFromFile()
+    if(result) addToast("Reporte importado")
+    else addToast("Error importando reporte",'error')
+  }
+
+  const handleExport = async (report:Report) => {
+    const result = await exportAndDownloadReports(report)
+    if(result) addToast("Reporte exportado")
+    else addToast("Error exportando reporte",'error')
+  }
+
   // Cancelar modo suma
   const cancelSum = () => setSumFirstReport(null);
 
   // Generar un ID único para cada reporte en la UI
   const getReportId = (report: Report | TempReport, index: number): string => {
     if ('tempId' in report) return `temp-${report.tempId}`;
-    return `persisted-${index}`;
+    return `persisted-${index}-${report.date}`;
   };
 
   if (loading) {
@@ -175,7 +91,17 @@ export function Reports() {
         <div className="text-center py-12 text-gray-500">
           <i className="fas fa-chart-bar text-6xl mb-4"></i>
           <p className="text-xl">No hay reportes disponibles</p>
-          <p className="mt-2">Los reportes se generarán automáticamente después de realizar ventas.</p>
+          <p className="my-2">Los reportes se generarán automáticamente después de realizar ventas.</p>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleImport} 
+            className="bg-blue-600 text-white hover:bg-blue-700 hover:text-white">
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+            </svg>
+            Importar Reporte
+          </Button>
         </div>
       </div>
     );
@@ -186,8 +112,20 @@ export function Reports() {
 
   return (
     <div className="bg-white shadow rounded-lg p-6">
-      <h2 className="text-lg font-medium text-gray-900 mb-6">Reportes de Ventas</h2>
-      
+      <div className="flex justify-between">
+        <h2 className="text-lg font-medium text-gray-900 mb-6">Reportes de Ventas</h2>
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          onClick={handleImport} 
+          className="bg-blue-600 text-white hover:bg-blue-700 hover:text-white">
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+          </svg>
+          Importar Reporte
+        </Button>
+      </div>
+
       {/* Indicador de modo suma */}
       {sumFirstReport && (
         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex justify-between items-center">
@@ -218,24 +156,22 @@ export function Reports() {
               )
             : sortedSales;
 
-          // Estadísticas del reporte (basadas en la lista completa)
+          // Estadísticas del reporte
           const totalProducts = report.dailySales.length;
           const totalUnits = report.dailySales.reduce((sum, item) => sum + item.quantity, 0);
-          const subtotal = report.grandTotal;
 
           return (
             <div 
               key={reportId}
               className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow duration-200"
             >
-              {/* Encabezado del reporte - Clickable (excepto en modo suma) */}
+              {/* Encabezado del reporte */}
               <div 
                 className={`bg-gray-50 px-4 py-3 flex justify-between items-center ${
                   !sumFirstReport ? 'cursor-pointer hover:bg-gray-100' : ''
                 }`}
                 onClick={() => {
                   if (sumFirstReport) {
-                    // En modo suma, el clic en la cabecera selecciona el segundo reporte
                     handleSumClick(reportId, report);
                   } else {
                     toggleReportExpansion(reportId);
@@ -295,6 +231,14 @@ export function Reports() {
                       >
                         Sumar reportes
                       </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleExport(report)
+                        }}
+                      >
+                        Exportar reporte
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
 
@@ -314,7 +258,7 @@ export function Reports() {
               {/* Contenido expandible */}
               {isExpanded && (
                 <div className="px-4 py-4 border-t animate-fadeIn">
-                  {/* Campo de búsqueda dentro del reporte */}
+                  {/* Campo de búsqueda */}
                   <div className="mb-4">
                     <input
                       type="text"
@@ -388,7 +332,7 @@ export function Reports() {
                                 Productos: {totalProducts} | Unidades: {totalUnits}
                               </span>
                               <span className="font-medium text-gray-700">
-                                Subtotal del día: <span className="font-bold text-green-600 text-lg">${subtotal.toFixed(2)}</span>
+                                Subtotal del día: <span className="font-bold text-green-600 text-lg">${report.grandTotal.toFixed(2)}</span>
                               </span>
                             </div>
                           </td>

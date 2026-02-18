@@ -12,17 +12,8 @@ interface Product{
     stock:number
 }
 
-interface BackupData {
-  exportType?: string;       
-  exportedAt?: string;       
-  key: string;               
-  data: Product[];       
-}
-
-const LOCAL_STORAGE_KEY = 'products_data';
-
 export function Products() {
-      const { products, isLoading, deleteProduct,fetchProducts} = useProducts();
+      const { products, isLoading, deleteProduct,importProducts,exportProducts} = useProducts();
       const [searchTerm, setSearchTerm] = useState('');
       const [showConfirm, setShowConfirm] = useState(false);
       const [productToDelete, setProductToDelete] = useState<Product|null>(null);
@@ -66,156 +57,16 @@ export function Products() {
         setShowModal(true);
       };
 
-      const handleExportBackup = () => {
-        try {
-          // 1. Leer solo los datos de 'products_data'
-          const productsData = localStorage.getItem(LOCAL_STORAGE_KEY);
-          
-          if (!productsData) {
-            addToast('No hay datos de productos para exportar.');
-            return;
-          }
-          
-          // 2. Crear objeto estructurado con metadatos
-          const exportData = {
-            exportType: 'products_backup',
-            exportedAt: new Date().toISOString(),
-            key: 'products_data',
-            data: JSON.parse(productsData) // Parseamos para validar estructura
-          };
-          
-          // 3. Convertir a JSON y crear archivo descargable
-          const dataStr = JSON.stringify(exportData, null, 2);
-          const dataBlob = new Blob([dataStr], { type: 'application/json' });
-          const url = URL.createObjectURL(dataBlob);
-          
-          // 4. Crear y disparar descarga
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `backup_products_${new Date().toISOString().split('T')[0]}.json`;
-          document.body.appendChild(link);
-          link.click();
-          
-          // 5. Limpieza
-          setTimeout(() => {
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-          }, 100);
-          
-          addToast(`Copia de seguridad exportada. ${exportData.data.length || 0} productos guardados.`);
-        } catch (error) {
-          console.error('Error al exportar backup:', error);
-          addToast('Error al generar la copia de seguridad. Verifica la consola para más detalles.');
-        }
+      const handleImportBackup = async () => {
+        const result = await importProducts()
+        if(result) addToast("Productos importados")
+        else addToast("Error importando productos",'error')
       };
 
-      function isValidProduct(obj: unknown): obj is Product {
-        if (!obj || typeof obj !== 'object') return false;
-        const p = obj as Partial<Product>;
-        return (
-          typeof p.id === 'number' &&
-          typeof p.name === 'string' &&
-          typeof p.sku === 'string' &&
-          typeof p.price === 'number' &&
-          typeof p.stock === 'number'
-        );
-      }
-
-      function isValidBackup(data: unknown, expectedKey: string): data is BackupData {
-        if (!data || typeof data !== 'object') return false;
-        const obj = data as Record<string, unknown>;
-        
-        // Validar que tenga la clave correcta y que data sea un array
-        if (obj.key !== expectedKey || !Array.isArray(obj.data)) {
-          return false;
-        }
-        
-        // Validar que al menos el primer elemento tenga la estructura correcta (opcional)
-        // Esto evita tener que recorrer todo el array aquí, se hará después con filter
-        return true;
-      }
-
-      const handleImportBackup = () => {
-        try {
-          const fileInput = document.createElement('input');
-          fileInput.type = 'file';
-          fileInput.accept = '.json';
-
-          fileInput.onchange = (event: Event) => {
-            const target = event.target as HTMLInputElement;
-            const file = target.files?.[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-
-            reader.onload = (e: ProgressEvent<FileReader>) => {
-              try {
-                const fileContent = e.target?.result as string;
-                const parsedData: unknown = JSON.parse(fileContent);
-
-                // Validar estructura del archivo usando el type guard
-                if (!isValidBackup(parsedData, LOCAL_STORAGE_KEY)) {
-                  throw new Error('Archivo no válido. Debe ser un backup de products_data.');
-                }
-
-                // A partir de aquí parsedData es tratado como BackupData
-                const importData = parsedData as BackupData;
-
-                // Validar cada producto y filtrar inválidos
-                const invalidProducts = importData.data.filter(p => !isValidProduct(p));
-
-                if (invalidProducts.length > 0) {
-                  const confirmImport = window.confirm(
-                    `Se encontraron ${invalidProducts.length} producto(s) con estructura inválida. ¿Deseas importar solo los productos válidos?`
-                  );
-
-                  if (!confirmImport) return;
-
-                  // Filtrar solo productos válidos
-                  importData.data = importData.data.filter(isValidProduct);
-                }
-
-                // Confirmar sobreescritura de datos existentes
-                const currentData = localStorage.getItem(LOCAL_STORAGE_KEY);
-                if (currentData) {
-                  try {
-                    const currentProducts: unknown = JSON.parse(currentData);
-                    const currentCount = Array.isArray(currentProducts) ? currentProducts.length : 0;
-                    const confirmOverwrite = window.confirm(
-                      `¿Deseas reemplazar los ${currentCount} productos actuales con ${importData.data.length} productos del archivo?`
-                    );
-                    if (!confirmOverwrite) return;
-                  } catch {
-                    // Si el JSON actual es inválido, se sobreescribe sin preguntar (o podrías preguntar igual)
-                    const confirmOverwrite = window.confirm(
-                      `Los datos actuales parecen corruptos. ¿Deseas reemplazarlos con ${importData.data.length} productos del archivo?`
-                    );
-                    if (!confirmOverwrite) return;
-                  }
-                }
-
-                // Guardar en localStorage
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(importData.data));
-
-                // Actualizar estado de la aplicación (asumiendo que fetchProducts y addToast existen)
-                fetchProducts(); // recarga la lista de productos
-                addToast(`✅ Importación exitosa! Se importaron ${importData.data.length} productos.`);
-
-              } catch (error) {
-                console.error('Error al procesar archivo:', error);
-                const message = error instanceof Error ? error.message : 'Error desconocido';
-                addToast(`❌ Error al importar: ${message}`);
-              }
-            };
-
-            reader.readAsText(file);
-          };
-
-          fileInput.click();
-        } catch (error) {
-          console.error('Error en importación:', error);
-          addToast('❌ Error al iniciar la importación.');
-        }
+      const handleExportBackup = async () => {
+         const result = await exportProducts()
+        if(result) addToast("Productos exportados")
+        else addToast("Error exportando productos",'error')
       };
       
       if (isLoading) {
